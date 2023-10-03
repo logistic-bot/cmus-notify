@@ -6,7 +6,14 @@ sub error {
 	open(my $fh, ">>", "$ENV{HOME}/.local/share/cmus-notify/error.log") 
 		|| die "failed to log the fail: $!\n";
 	print $fh (scalar(localtime), " - ", @_, "\n");
-	die "cmus-notify error logged\n";
+	print "cmus-notify error logged\n";
+}
+
+sub fatal_error {
+	open(my $fh, ">>", "$ENV{HOME}/.local/share/cmus-notify/fatal_error.log") 
+		|| die "failed to log the fail: $!\n";
+	print $fh (scalar(localtime), " - ", @_, "\n");
+	die "cmus-notify fatal_error logged\n";
 }
 
 sub read_config {
@@ -14,11 +21,11 @@ sub read_config {
 	my $loc = "$ENV{HOME}/.config/cmus/notify.cfg";
 	unless (-e $loc) {
 		open(my $fh, ">>", $loc) 
-			|| error ("can't create config file: $!\n");
+			|| fatal_error ("can't create config file: $!\n");
 		print $fh config();
 	}
 	my $fh;
-	open($fh, "<", $loc) || error("can't open config file: $!\n");
+	open($fh, "<", $loc) || fatal_error("can't open config file: $!\n");
 	while (chomp(my $line = <$fh>)) { 
 		@$opts = split(/ /, $line);
 	}
@@ -84,12 +91,12 @@ sub manip_art {
 sub get_art {
 	my ($cache_dir, $ph, $file, $magick) = @_;
 	tie my @cache, 'Tie::File', "$cache_dir/store.txt", memory => 40
-		|| error("can't access $cache_dir/store.txt: $!\n");
+		|| fatal_error("can't access $cache_dir/store.txt: $!\n");
 
 	my $fingerprint = sub {
 		my $file = shift;
 		sysopen(my $fh, $file, 0)
-			|| error("can't open $file: $!\n");
+			|| fatal_error("can't open $file: $!\n");
 		my $fsize = sysseek($fh, 0, 2);
 		my $pos = $fsize/2;
 # best-guess method, trying to avoid catching format metadata
@@ -123,7 +130,7 @@ sub get_art {
 			$filename = $ph;
 		}
 		else {
-			error("$cache_dir/$aid.png expected and not found")
+			fatal_error("$cache_dir/$aid.png expected and not found")
 				unless -e "$cache_dir/$aid.png";
 			$filename = "$aid.png";
 		}
@@ -134,6 +141,7 @@ sub get_art {
 	}
 # return refs needed for later caching
 	my $aref = [$cache_dir, $fid, $aid, \@cache];
+	print $aref;
 	return $aref;
 } 
 
@@ -146,7 +154,7 @@ sub init_ph {
 			MIME::Base64->import(qw(decode_base64));
 			my $png = decode_base64(b64ph());
 			open(my $fh, ">", "$cache_dir/no_art.png")
-				|| error("can't open in $cache_dir: $!\n");
+				|| fatal_error("can't open in $cache_dir: $!\n");
 			binmode($fh, ":raw");
 			print $fh $png;
 		}
@@ -156,16 +164,16 @@ sub init_ph {
 # or return a filename the user defined
 	else {
 		my $ph = substr(${$optref}->[0], (index(${$optref}->[0], ':') + 1));
-		error("Invalid placeholder value found in config") unless $ph;
-		error("Placeholder image not found") unless (-e "$cache_dir/$ph");
-		(-r "$cache_dir/$ph") ? return $ph : error("Can't read $cache_dir/$ph");
+		fatal_error("Invalid placeholder value found in config") unless $ph;
+		fatal_error("Placeholder image not found") unless (-e "$cache_dir/$ph");
+		(-r "$cache_dir/$ph") ? return $ph : fatal_error("Can't read $cache_dir/$ph");
 	}
 }
 
 sub run_ffmpeg {
-	error("ffmpeg unavailable\n")
+	fatal_error("ffmpeg unavailable\n")
 		unless grep { -e "$_/ffmpeg" } split(/:/, $ENV{PATH});
-	error("ffprobe unavailable\n")
+	fatal_error("ffprobe unavailable\n")
 		unless grep { -e "$_/ffprobe" } split(/:/, $ENV{PATH});
 	my $file = shift;
 	my $refs = shift;
@@ -175,7 +183,7 @@ sub run_ffmpeg {
 # refreshing and locking cache to prevent concurrency problems
 	untie @{$refs->[0]};
 	my $obj = tie my @cache, 'Tie::File', "$cache_dir/store.txt", memory => 35
-		|| error("can't access $cache_dir/store.txt: $!\n");
+		|| fatal_error("can't access $cache_dir/store.txt: $!\n");
 	$obj->flock;
 
 	require IPC::Open3;
@@ -198,7 +206,7 @@ sub run_ffmpeg {
 	$aid = md5_hex($raw);
 	unless (-e "$cache_dir/$aid.png") {
 		open(my $fh, ">", "$cache_dir/$aid.png")
-			|| error("can't write PNG: $!\n");
+			|| fatal_error("can't write PNG: $!\n");
 		binmode($fh, ":raw");
 		print $fh $raw;
 	}
@@ -210,7 +218,7 @@ sub run_ffmpeg {
 	while (<$out>) { $pngerr .= $_ }
 	if ($pngerr) {
 		unlink "$cache_dir/$aid.png"
-			|| error("can't remove $aid.png: $!\n");
+			|| fatal_error("can't remove $aid.png: $!\n");
 		push @cache, "$fid:no_art";
 	} else {
 		push my @data, (grep { $_ =~ m/$fid/ } @cache);
@@ -243,7 +251,7 @@ sub main {
 		my $playlist = $ARGV[0];
 
 		my $cache_dir = "$data_dir/covers";
-		mkdir $cache_dir, 0755 || error("failed to create $cache_dir: $!\n")
+		mkdir $cache_dir, 0755 || fatal_error("failed to create $cache_dir: $!\n")
 			unless -e $cache_dir;
 
 		open(my $fh, "<", $playlist)
@@ -307,7 +315,8 @@ sub main {
 # or if config options malformed
 	$body //= [ split(/\//, $fmtd{file}) ]->[-1];
 # prepend status, which is always provided
-	push(my @args, $fmtd{status});
+	#push(my @args, $fmtd{status});
+	push(my @args, $playing{title});
 	push(@args, $body);
 	chomp($args[-1]);
 
@@ -315,7 +324,7 @@ sub main {
 
 # create cache dir unless it exists
 		my $cache_dir = "$data_dir/covers";
-		mkdir $cache_dir, 0755 || error("failed to create $cache_dir: $!\n")
+		mkdir $cache_dir, 0755 || fatal_error("failed to create $cache_dir: $!\n")
 			unless -e $cache_dir;
 
 # init placeholder art or confirm user defined
@@ -336,12 +345,12 @@ sub main {
 	}
 
 	unless ($dunst) {
-		error("notify-send unavailable\n")
+		fatal_error("notify-send unavailable\n")
 			unless grep { -e "$_/notify-send" } split(/:/, $ENV{PATH});
 		system('notify-send', @args);
 	}
 	else {
-		error("dunstify unavailable\n")
+		fatal_error("dunstify unavailable\n")
 			unless grep { -e "$_/dunstify" } split(/:/, $ENV{PATH});
 		unshift(@args, "-h", "string:x-dunst-stack-tag:cmus");
 		system('dunstify', @args);
